@@ -1,0 +1,103 @@
+```{r}
+#first library a few packages that we will use during the practical
+#note you may need to install them first...
+library(spatstat)#空间点模式分析
+library(here)
+library(sp)#定义了点（Points）、线（Lines）和多边形（Polygons）等空间数据的类和方法
+library(tmap)
+library(sf)#基于“Simple Features”标准
+library(tmaptools)
+```
+
+```{r}
+##First, get the London Borough Boundaries获取伦敦边界
+LondonBoroughs <- st_read(here::here("practical_6", "statistical-gis-boundaries-london", "ESRI", "London_Borough_Excluding_MHW.shp"))
+```
+```{r}
+library(stringr)#提供了一组用于字符串处理的函数
+#dplyr 包的 filter 函数对数据进行过滤
+#str_detect(GSS_CODE, "^E09")：检查 GSS_CODE 列中是否有以 E09 开头的值
+BoroughMap <- LondonBoroughs %>%
+  dplyr::filter(str_detect(GSS_CODE, "^E09"))%>%
+  st_transform(., 27700)
+#. 是管道操作符传递过来的数据（即过滤后的 BoroughMap）
+
+#快速生成地图
+qtm(BoroughMap)
+```
+```{r}
+summary(BoroughMap)
+```
+```{r}
+BluePlaques <- st_read(here::here("practical_6",
+                                  "open-plaques-london-2018-04-08.geojson")) %>%
+  st_transform(.,27700)
+```
+```{r}
+summary(BluePlaques)
+```
+```{r}
+# plot the blue plaques斑块 in the city
+
+# 设置 tmap 的模式为静态绘图模式（plot）
+tmap_mode("plot")
+# 定义地图的第一层，BoroughMap 是一个包含伦敦行政区几何形状的空间对象（通常是 sf 数据对象）
+# col = NA: 不填充多边形内部（透明填充），alpha = 0.5: 设置多边形的透明度为 50%
+# 定义地图的第二层，数据源为 BluePlaques
+# 在地图上绘制点符号
+tm_shape(BoroughMap) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaques) +
+  tm_dots(col = "blue")
+```
+```{r}
+# 数据清洗
+#remove duplicates
+library(tidyverse)
+library(sf)
+
+# 使用 distinct() 函数移除 BluePlaques 数据集中的重复行
+BluePlaques <- distinct(BluePlaques)
+```
+```{r}
+# 空间子集操作，使用 BoroughMap 的几何边界对 BluePlaques 进行裁剪或筛选
+BluePlaquesSub <- BluePlaques[BoroughMap,]
+#check to see that they've been removed
+# 将 tmap 设置为静态模式
+tmap_mode("plot")
+
+tm_shape(BoroughMap) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaquesSub) +
+  tm_dots(col = "blue")
+```
+
+```{r}
+# add sparse=false to get the complete matrix.添加 sparse = FALSE 参数以获得完整的矩阵
+# st_intersects(BoroughMap, BluePlaques)该函数用于判断 BoroughMap 中的几何形状是否与 BluePlaques 中的几何形状相交
+intersect_indices <-st_intersects(BoroughMap, BluePlaques)
+```
+
+```{r}
+Londonborough <- st_read(here::here("Practical_6",
+                                    "statistical-gis-boundaries-london", 
+                                    "ESRI", 
+                                    "London_Borough_Excluding_MHW.shp"))%>%
+  st_transform(., 27700)
+```
+```{r}
+OSM <- st_read(here::here("practical_6",
+                          "greater-london-latest-free.shp", 
+                          "gis_osm_pois_a_free_1.shp")) %>%
+  st_transform(., 27700) %>%
+  #select hotels only
+  filter(fclass == 'hotel')
+```
+```{r}
+# st_join空间连接
+# 根据空间关系（默认为相交 intersect）将 Londonborough 的属性合并到 OSM 数据中
+# 如果 OSM 中的一个特征与多个 Londonborough 的特征相交，该特征会被复制多次，每次附加一个匹配的属性
+join_example <-  st_join(OSM, Londonborough)
+
+#返回 join_example 数据集中的行数
+nrow(join_example)
