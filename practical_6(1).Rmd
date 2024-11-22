@@ -171,9 +171,55 @@ all_accomodation <- st_join(Hotels, Airbnb, join = st_equals)
 
 head(all_accomodation)
 ```
+#study area
 ```{r}
+#extract the borough
 
+# select by attribute根据属性选择Harrow生成新空间数据集
+Harrow <- BoroughMap %>%
+  filter(., NAME=="Harrow")
+
+#Check to see that the correct borough has been pulled out
+tm_shape(Harrow) +
+  tm_polygons(col = NA, alpha = 0.5)
 ```
+```{r}
+#clip the data to our single borough在 BluePlaques 中筛选出那些几何形状与 Harrow 区域相交的行。保留所有的列。
+BluePlaquesSub <- BluePlaques[Harrow,]
+#check that it's worked
+tmap_mode("plot")
+```
+```{r}
+tm_shape(Harrow) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaquesSub) +
+  tm_dots(col = "blue")
+```
+
+```{r}
+#now set a window as the borough boundary建一个观测窗口
+window <- as.owin(Harrow)
+plot(window)
+```
+```{r}
+# create a sp object创建一个点模式对象来分析点模式
+# 使用 as() 函数将 sf 对象 BluePlaquesSub 转换为 Spatial 对象
+BluePlaquesSub<- BluePlaquesSub %>%
+  as(., 'Spatial')
+# create a ppp object
+# 使用 spatstat 包中的 ppp() 函数，将点数据转换为点模式对象，用于点模式分析，X 坐标（经度）， Y 坐标（纬度）
+# @coords是 SpatialPointsDataFrame 对象的属性，存储点的坐标矩阵
+BluePlaquesSub.ppp <- ppp(x=BluePlaquesSub@coords[,1],
+                          y=BluePlaquesSub@coords[,2],
+                          window=window)
+```
+```{r}
+# 16为实心圆，cex设置点的大小缩放比例为 0.5，main标题
+BluePlaquesSub.ppp %>%
+  plot(.,pch=16,cex=0.5, 
+       main="Blue Plaques Harrow")
+```
+
 
 
 
