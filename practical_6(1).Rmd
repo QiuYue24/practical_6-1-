@@ -101,3 +101,83 @@ join_example <-  st_join(OSM, Londonborough)
 
 #返回 join_example 数据集中的行数
 nrow(join_example)
+```
+
+```{r}
+#London Borough data is already in 277000
+Londonborough <- st_read(here::here("practical_6",
+                                    "statistical-gis-boundaries-london", 
+                                    "ESRI", 
+                                    "London_Borough_Excluding_MHW.shp"))%>%
+  st_transform(., 27700)
+```
+```{r}
+# read in the .csv
+# and make it into spatial data
+
+# 使用 sf 包中的 st_as_sf() 函数将普通数据帧转换为 sf 对象（即空间数据帧）
+# 指定 "longitude" 和 "latitude" 作为几何列，并设置坐标参考系统（CRS）为 EPSG:4326 (WGS84 地理坐标)
+# 将空间数据转换为 EPSG:27700（英国国家网格）
+Airbnb <- read_csv("practical_6/listings.csv") %>%
+  st_as_sf(., coords = c("longitude", "latitude"), 
+                   crs = 4326) %>%
+    st_transform(., 27700)%>%
+    #select entire places that are available all year 筛选数据，仅保留类型为 'Entire home/apt' 的 Airbnb 房源，并且这些房源全年 365 天可用
+    filter(room_type == 'Entire home/apt' & availability_365 =='365')
+
+
+# make a function for the join
+# functions are covered in practical 7
+# but see if you can work out what is going on
+# hint all you have to do is replace data1 and data2 提示你所要做的就是替换 data1 和 data2
+# with the data you want to use
+
+Joinfun <- function(data1, data2){
+
+# data1 %>% st_join(Londonborough, .)：使用 st_join() 函数将 data1 和 Londonborough 进行空间连接
+# add_count() 函数用于对每个 GSS_CODE 的酒店数量进行计数，并将结果添加为名为 "hotels_in_borough" 的新列
+output<- data1%>%
+  st_join(Londonborough,.) %>%
+  add_count(GSS_CODE, name="hotels_in_borough") 
+
+  return(output)
+}
+
+#Hotels： 处理 OSM 数据，加入到 Londonborough。
+#Airbnb： 处理 Airbnb 数据，同样加入到 Londonborough
+Hotels <- Joinfun(OSM, Londonborough)
+Airbnb <- Joinfun(Airbnb, Londonborough)
+ 
+# 对 Hotels 数据集按照 GSS_CODE 和 NAME 进行分组
+#对每个分组内的数据进行汇总，提取每个行政区中唯一的酒店数量，生成新的列 Accomodation count，表示该行政区的酒店或住宿设施总数。
+Hotels <- Hotels %>%
+  #at the moment each hotel is a row for the borough
+  #we just one one row that has number of airbnbs
+  group_by(., GSS_CODE, NAME)%>%
+  summarise(`Accomodation count` = unique(hotels_in_borough))
+
+
+Airbnb <- Airbnb %>%
+  group_by(., GSS_CODE, NAME)%>%
+  summarise(`Accomodation count` = unique(hotels_in_borough))
+```
+```{r}
+all_accomodation <- st_join(Hotels, Airbnb)
+
+head(all_accomodation)
+```
+```{r}
+all_accomodation <- st_join(Hotels, Airbnb, join = st_equals)
+
+head(all_accomodation)
+```
+```{r}
+
+```
+
+
+
+
+
+
+
