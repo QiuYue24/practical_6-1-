@@ -219,8 +219,120 @@ BluePlaquesSub.ppp %>%
   plot(.,pch=16,cex=0.5, 
        main="Blue Plaques Harrow")
 ```
+#Kernel Density Estimation
+```{r}
+#使用density()函数从 ppp 对象生成内核密度估计 (KDE) 映射
+#西格玛值设置内核的直径
+BluePlaquesSub.ppp %>%
+  density(., sigma=500) %>%
+  plot()
+```
+#Quadrat Analysis
+```{r}
+#First plot the points
+#16为实心圆，cex设置点的大小缩放比例为 0.5，main标题
+plot(BluePlaquesSub.ppp,
+     pch=16,
+     cex=0.5, 
+     main="Blue Plaques in Harrow")
+
+#now count the points in that fall in a 6 x 6，对研究区域进行 6×6 网格划分，统计每个网格内的点数，并将统计结果绘制在已有图形上（add=T 表示叠加）
+#grid overlaid across the windowBluePlaquesSub.ppp2<-BluePlaquesSub.ppp %>%
+BluePlaquesSub.ppp %>%
+  quadratcount(.,nx = 6, ny = 6)%>%
+    plot(., add=T, col="red")
+```
+
+```{r}
+#Qcount 是一个数据框，包含以下两列：①Freq：网格中点的数量。②Freqquadratcount：具有相同点数量的网格数量
+#run the quadrat count
+#as.data.frame()将 quadratcount 对象转换为数据框格式
+#dplyr::count() 函数，计算每种网格点数（Freq）出现的次数
+#Var1 和 Var2：表示网格的行号和列号；Var1=Freq：指定以网格点数（Freq）为统计对象
+#结果是一个包含两列的数据框：
+#第一列：网格中点的数量（Freq）。
+#第二列：具有相同点数量的网格个数（n）。
+#将列名 n 重命名为 Freqquadratcount
+Qcount <- BluePlaquesSub.ppp %>%
+  quadratcount(.,nx = 6, ny = 6) %>%
+  as.data.frame() %>%
+  dplyr::count(Var1=Freq)%>%
+  dplyr::rename(Freqquadratcount=n)
+
+#检查第一列中的数据类型 - 如果它是因子，我们需要将其转换为数字
+Qcount %>% 
+  summarise_all(class)
+```
+#泊松分布计算预期 k 是一个正方形中蓝色斑块的数量
+```{r}
+sums <- Qcount %>%
+  #calculate the total blue plaques (Var * Freq)
+  mutate(total = Var1 * Freqquadratcount) %>%
+  dplyr::summarise(across(everything(), sum))%>%
+  dplyr::select(-Var1) 
+
+lambda<- Qcount%>%
+  #calculate lambda
+  mutate(total = Var1 * Freqquadratcount)%>%
+  dplyr::summarise(across(everything(), sum)) %>%
+  mutate(lambda=total/Freqquadratcount) %>%
+  dplyr::select(lambda)%>%
+  pull(lambda)
+```
+
+```{r}
+QCountTable <- Qcount %>%
+  mutate(Pr=((lambda^Var1)*exp(-lambda))/factorial(Var1))%>%
+  #now calculate the expected counts based on our total number of plaques
+  #and save them to the table
+  mutate(Expected= (round(Pr * sums$Freqquadratcount, 0)))
+
+#Compare the frequency distributions of the observed and expected point patterns
+plot(c(1,5),c(0,14), type="n",
+xlab="Number of Blue Plaques (Red=Observed,Blue=Expected)", 
+     ylab="Frequency of Occurances")
+points(QCountTable$Freqquadratcount, 
+       col="Red", 
+       type="o", 
+       lwd=3)
+points(QCountTable$Expected, col="Blue", 
+       type="o", 
+       lwd=3)
+```
+
+#使用卡方检验来比较每个象限的观察频率和预期频率（而不是象限计数的
+#卡方检验确定两个分类变量之间是否存在关联。卡方值越高，差异越大。
+```{r}
+teststats <- quadrat.test(BluePlaquesSub.ppp, nx = 6, ny = 6)
+```
+```{r}
+plot(BluePlaquesSub.ppp,pch=16,cex=0.5, main="Blue Plaques in Harrow")
+plot(teststats, add=T, col = "red")
+```
 
 
+
+#解决样方分析局限性：
+#Ripley 的 K 函数的计算内容：将观察到的点分布与整个不同距离半径范围的泊松随机模型进行比较
+```{r}
+K <- BluePlaquesSub.ppp %>%
+  Kest(., correction="border") %>%
+  plot()
+```
+
+```{r}
+Kval <- as.data.frame(Kest(BluePlaquesSub.ppp, correction = "Ripley"))
+```
+
+#基于密度的噪声应用空间聚类：DBSCAN
+```{r}
+library(fpc)
+```
+#对我所在行政区的蓝色斑块进行 DBSCAN 分析，以查看是否存在任何集群
+```{r}
+#first check the coordinate reference system of the Harrow spatial polygon:
+st_geometry(BoroughMap)
+```
 
 
 
