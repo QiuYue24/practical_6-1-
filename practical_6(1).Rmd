@@ -334,8 +334,104 @@ library(fpc)
 st_geometry(BoroughMap)
 ```
 
+```{r}
+#根据之前 Ripley's K 分析的结果，我们可以看到我们的聚类半径约为 1200m，图中最大的凸起位于 700m 左右。
+#从搜索至少 4 个点的簇开始，选eps为700
+#first extract the points from the spatial points data frame
+BluePlaquesSubPoints <- BluePlaquesSub %>%
+  coordinates(.)%>%
+  as.data.frame()
 
+#now run the dbscan analysis
+db <- BluePlaquesSubPoints %>%
+  fpc::dbscan(.,eps = 700, MinPts = 4)
 
+#now plot the results
+plot(db, BluePlaquesSubPoints, main = "DBSCAN Output", frame = F)
+plot(BoroughMap$geometry, add=T)
+```
+#或者使用dbscan pacakge 中的kNNdistplot()根据图中的“膝盖”找到合适的 eps 值
+```{r}
+# used to find suitable eps value based on the knee in plot
+# k is no of nearest neighbours used, use min points
+library(dbscan)
 
+BluePlaquesSubPoints%>%
+  dbscan::kNNdistplot(.,k=4)
+```
+
+```{r}
+library(ggplot2)
+db$cluster
+```
+```{r}
+BluePlaquesSubPoints<- BluePlaquesSubPoints %>%
+  mutate(dbcluster=db$cluster)
+```
+
+#创建一些凸包多边形来包围簇中的点
+```{r}
+#将点数据按 dbcluster 分组,每个 dbcluster 代表一个聚类，凸包将在每个聚类内单独计算.
+#hull = 1:n()：为当前分组中的每个点生成一个递增的索引
+chulls <- BluePlaquesSubPoints %>%
+  group_by(dbcluster) %>%
+  dplyr::mutate(hull = 1:n(),
+  hull = factor(hull, chull(coords.x1, coords.x2)))%>%
+  arrange(hull)
+
+#chulls2 <- ddply(BluePlaquesSubPoints, .(dbcluster), 
+              #  function(df) df[chull(df$coords.x1, df$coords.x2), ])
+chulls <- chulls %>%
+  filter(dbcluster >=1)
+```
+
+#从我们的数据创建一个ggplot2对象
+```{r}
+dbplot <- ggplot(data=BluePlaquesSubPoints, 
+                 aes(coords.x1,coords.x2, colour=dbcluster, fill=dbcluster)) 
+#add the points in
+dbplot <- dbplot + geom_point()
+#now the convex hulls
+dbplot <- dbplot + geom_polygon(data = chulls, 
+                                aes(coords.x1,coords.x2, group=dbcluster), 
+                                alpha = 0.5) 
+#now plot, setting the coordinates to scale correctly and as a black and white plot 
+#(just for the hell of it)...
+dbplot + theme_bw() + coord_equal()
+```
+
+```{r}
+###add a basemap添加底图
+##First get the bbox in lat long for Harrow
+HarrowWGSbb <- Harrow %>%
+  st_transform(., 4326)%>%
+  st_bbox()
+```
+
+#将底图转换为英国国家网格
+```{r}
+library(OpenStreetMap)
+
+basemap <- OpenStreetMap::openmap(c(51.5549876,-0.4040502),c(51.6405356,-0.2671315),
+                         zoom=NULL,
+                         "osm")
+
+  # convert the basemap to British National Grid
+basemap_bng <- openproj(basemap, projection="+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +nadgrids=OSTN15_NTv2_OSGBtoETRS.gsb +units=m +no_defs +type=crs")
+```
+
+```{r}
+#autoplot(basemap_bng) sometimes works
+autoplot.OpenStreetMap(basemap_bng)+ 
+  geom_point(data=BluePlaquesSubPoints, 
+             aes(coords.x1,coords.x2, 
+                 colour=dbcluster, 
+                 fill=dbcluster)) + 
+  geom_polygon(data = chulls, 
+               aes(coords.x1,coords.x2, 
+                   group=dbcluster,
+                   fill=dbcluster), 
+               alpha = 0.5)  
+```
 
 
