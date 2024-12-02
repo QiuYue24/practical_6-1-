@@ -1,0 +1,329 @@
+
+```{r}
+library(here)
+library(janitor)
+library(sf)
+library(tidyverse)
+#read the ward data in
+LondonWards <- st_read(here::here("practical_6","statistical-gis-boundaries-london(1)","ESRI", "London_Ward.shp"))
+```
+```{r}
+LondonWardsMerged <- st_read(here::here("practical_6", 
+                                        "statistical-gis-boundaries-london", 
+                                        "ESRI",
+                                        "London_Ward_CityMerged.shp"))%>%
+  st_transform(.,27700)
+```
+
+```{r}
+WardData <- read_csv("https://data.london.gov.uk/download/ward-profiles-and-atlas/772d2d64-e8c6-46cb-86f9-e52b4c7851bc/ward-profiles-excel-version.csv",
+                    locale = locale(encoding = "latin1"),
+                     na = c("NA", "n/a")) %>% 
+  clean_names()
+
+LondonWardsMerged <- LondonWardsMerged %>% 
+  left_join(WardData, 
+            by = c("GSS_CODE" = "new_code"))%>%
+  dplyr::distinct(GSS_CODE, .keep_all = T)%>%
+  dplyr::select(GSS_CODE, ward_name, average_gcse_capped_point_scores_2014)
+```
+```{r}
+#have a look to check that it's 
+#in the right projection
+st_crs(LondonWardsMerged)
+```
+```{r}
+library(tmap)
+
+BluePlaques <- st_read(here::here("practical_6",
+                                  "open-plaques-london-2018-04-08.geojson")) %>%
+    st_transform(.,27700)
+```
+```{r}
+tmap_mode("plot")
+tm_shape(LondonWardsMerged) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaques) +
+  tm_dots(col = "blue")
+```
+```{r}
+summary(BluePlaques)
+```
+
+```{r}
+BluePlaquesSub <- BluePlaques[LondonWardsMerged,]
+
+tm_shape(LondonWardsMerged) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaquesSub) +
+  tm_dots(col = "blue")
+```
+```{r}
+example<-st_intersects(LondonWardsMerged, BluePlaquesSub)
+
+example
+```
+```{r}
+check_example <- LondonWardsMerged%>%
+  st_join(BluePlaquesSub)%>%
+  filter(ward_name=="Kingston upon Thames - Coombe Hill")
+```
+
+```{r}
+library(sf)
+points_sf_joined <- LondonWardsMerged%>%
+  mutate(n = lengths(st_intersects(., BluePlaquesSub)))%>%
+  janitor::clean_names()%>%
+  #calculate area
+  mutate(area=st_area(.))%>%
+  #then density of the points per ward
+  mutate(density=n/area)%>%
+  #select density and some other variables 
+  dplyr::select(density, ward_name, gss_code, n, average_gcse_capped_point_scores_2014)
+```
+
+
+```{r}
+points_sf_joined <- points_sf_joined %>%                    
+  group_by(gss_code) %>%         
+  summarise(density = first(density),
+          wardname= first(ward_name),
+          plaquecount= first(n))
+
+tm_shape(points_sf_joined) +
+    tm_polygons("density",
+        style="jenks",
+        palette="PuOr",
+        midpoint=NA,
+        popup.vars=c("wardname", "density"),
+        title="Blue Plaque Density")
+```
+#Weight matrix权重矩阵
+
+```{r}
+library(spdep)
+
+#First calculate the centroids of all Wards in London计算伦敦所有Wards的质心
+
+coordsW <- points_sf_joined%>%
+  st_centroid()%>%
+  st_geometry()
+  
+plot(coordsW,axes=TRUE)
+```
+```{r}
+#create a neighbours list输出是邻居列表对象LWard_nb
+LWard_nb <- points_sf_joined %>%
+  poly2nb(., queen=T)
+```
+
+```{r}
+#获得平均邻居数是 5.88
+summary(LWard_nb)
+```
+```{r}
+#plot them绘制邻居图
+plot(LWard_nb, st_geometry(coordsW), col="red")
+#add a map underneath
+plot(points_sf_joined$geometry, add=T)
+```
+
+#Matrix style矩阵样式
+
+```{r}
+#矩阵的大小为邻域数量
+#create a spatial weights matrix from these weights创建一个空间权重矩阵（二进制）
+Lward.lw <- LWard_nb %>%
+  nb2mat(., style="B")
+
+sum(Lward.lw)
+#对二进制求和 (1/0) 显示我们有 3680 个邻居
+```
+```{r}
+#行标准化，其中 1 除以每行中邻居数量的总和
+sum(Lward.lw[1,])
+#第 1 行的总和为 6，仅第 1 行中的每个权重为 0.166
+```
+#Autocorrelation
+```{r}
+#将矩阵转换成空间权重列表类型对象做莫兰I
+Lward.lw <- LWard_nb %>%
+  nb2listw(., style="C")
+```
+
+#Moran 的 I 测试告诉我们是否有聚集值（接近 1）或分散值（接近 -1），即计算密度而非原始值
+```{r}
+# 1 = 聚类，0 = 无模式，-1 = 分散
+I_LWard_Global_Density <- points_sf_joined %>%
+  pull(density) %>%
+  as.vector()%>%
+  moran.test(., Lward.lw)
+
+I_LWard_Global_Density
+```
+#Geary’s C
+```{r}
+#相似的值或不相似的值是否聚类
+#C 介于 0 和 2 之间；1 表示没有空间自相关，<1 - 正空间自相关或相似值聚类，>1 - 负空间自相关或不相似值聚类
+C_LWard_Global_Density <- 
+  points_sf_joined %>%
+  pull(density) %>%
+  as.vector()%>%
+  geary.test(., Lward.lw)
+
+C_LWard_Global_Density
+```
+#Getis Ord
+```{r}
+#高值还是低值正在聚类。如果 G > 预期 = 高值聚类；如果 G < 预期 = 低值聚类
+G_LWard_Global_Density <- 
+  points_sf_joined %>%
+  pull(density) %>%
+  as.vector()%>%
+  globalG.test(., Lward.lw)
+
+G_LWard_Global_Density
+```
+#
+```{r}
+#use the localmoran function to generate I for each ward in the city
+
+I_LWard_Local_count <- points_sf_joined %>%
+  pull(plaquecount) %>%
+  as.vector()%>%
+  localmoran(., Lward.lw)%>%
+  as_tibble()
+
+I_LWard_Local_Density <- points_sf_joined %>%
+  pull(density) %>%
+  as.vector()%>%
+  localmoran(., Lward.lw)%>%
+  as_tibble()
+
+#what does the output (the localMoran object) look like?
+slice_head(I_LWard_Local_Density, n=5)
+#生成5列数据
+```
+```{r}
+#将一些列（I 分数（第 1 列）和 z 分数标准差（第 4 列））复制回 LondonWards SpatialPolygonsDataframe
+points_sf_joined <- points_sf_joined %>%
+  mutate(plaque_count_I = as.numeric(I_LWard_Local_count$Ii))%>%
+  mutate(plaque_count_Iz =as.numeric(I_LWard_Local_count$Z.Ii))%>%
+  mutate(density_I =as.numeric(I_LWard_Local_Density$Ii))%>%
+  mutate(density_Iz =as.numeric(I_LWard_Local_Density$Z.Ii))
+```
+
+#Mapping映射
+```{r}
+#手动设置断点
+breaks1<-c(-1000,-2.58,-1.96,-1.65,1.65,1.96,2.58,1000)
+```
+
+```{r}
+#创建一个新的发散颜色酿酒调色板并使用rev() （反向）反转顺序，较高的值对应于红色
+library(RColorBrewer)
+MoranColours<- rev(brewer.pal(8, "RdGy"))
+```
+
+#Plot on an interactive map在交互式地图上绘制
+```{r}
+tm_shape(points_sf_joined) +
+    tm_polygons("plaque_count_Iz",
+        style="fixed",
+        breaks=breaks1,
+        palette=MoranColours,
+        midpoint=NA,
+        title="Local Moran's I, Blue Plaques in London")
+```
+#本地 Getis 命令
+```{r}
+#与 Local Moran's I 非常相似的概念，只是它只返回一个 z 分数
+Gi_LWard_Local_Density <- points_sf_joined %>%
+  pull(density) %>%
+  as.vector()%>%
+  localG(., Lward.lw)
+
+head(Gi_LWard_Local_Density)
+```
+```{r}
+points_sf_joined <- points_sf_joined %>%
+  mutate(density_G = as.numeric(Gi_LWard_Local_Density))
+```
+
+```{r}
+library(RColorBrewer)
+
+GIColours<- rev(brewer.pal(8, "RdBu"))
+
+#now plot on an interactive map
+tm_shape(points_sf_joined) +
+    tm_polygons("density_G",
+        style="fixed",
+        breaks=breaks1,
+        palette=GIColours,
+        midpoint=NA,
+        title="Gi*, Blue Plaques in London")
+```
+#Other variables
+```{r}
+#use head to see what other variables are in the data file
+
+slice_head(points_sf_joined, n=2)
+```
+
+```{r}
+#打印出每列的类，尽管我们需要删除几何图形
+Datatypelist <- LondonWardsMerged %>% 
+  st_drop_geometry()%>%
+  summarise_all(class) %>%
+  pivot_longer(everything(), 
+               names_to="All_variables", 
+               values_to="Variable_class")
+
+Datatypelist
+```
+
+```{r}
+I_LWard_Local_GCSE <- LondonWardsMerged %>%
+  arrange(GSS_CODE)%>%
+  pull(average_gcse_capped_point_scores_2014) %>%
+  as.vector()%>%
+  localmoran(., Lward.lw)%>%
+  as_tibble()
+
+points_sf_joined <- points_sf_joined %>%
+  arrange(gss_code)%>%
+  mutate(GCSE_LocIz = as.numeric(I_LWard_Local_GCSE$Z.Ii))
+
+
+tm_shape(points_sf_joined) +
+    tm_polygons("GCSE_LocIz",
+        style="fixed",
+        breaks=breaks1,
+        palette=MoranColours,
+        midpoint=NA,
+        title="Local Moran's I, GCSE Scores")
+```
+```{r}
+G_LWard_Local_GCSE <- LondonWardsMerged %>%
+  dplyr::arrange(GSS_CODE)%>%
+  dplyr::pull(average_gcse_capped_point_scores_2014) %>%
+  as.vector()%>%
+  localG(., Lward.lw)
+
+points_sf_joined <- points_sf_joined %>%
+  dplyr::arrange(gss_code)%>%
+  dplyr::mutate(GCSE_LocGiz = as.numeric(G_LWard_Local_GCSE))
+
+tm_shape(points_sf_joined) +
+    tm_polygons("GCSE_LocGiz",
+        style="fixed",
+        breaks=breaks1,
+        palette=GIColours,
+        midpoint=NA,
+        title="Gi*, GCSE Scores")
+```
+
+
+
+
